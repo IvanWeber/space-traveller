@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Planet Ball 3rd Person – Two Planets</title>
+<style>
+  body { margin: 0; overflow: hidden; background: black; }
+  canvas { display: block; }
+  #hud {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: white;
+    font-family: monospace;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 5px 10px;
+    border-radius: 8px;
+  }
+</style>
+</head>
+<body>
+<div id="hud">
+  WASD – движение<br>
+  Мышь – вращение камеры<br>
+  Space – прыжок
+</div>
+
+<!-- Three.js -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.min.js"></script>
+<!-- Cannon.js -->
+<script src="https://cdn.jsdelivr.net/npm/cannon@0.6.2/build/cannon.min.js"></script>
+
+<script>
+//// === СЦЕНА ===
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 5000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+//// === СВЕТ ===
+const sun = new THREE.DirectionalLight(0xffffff, 1);
+sun.position.set(300, 400, 300);
+scene.add(sun);
+scene.add(new THREE.AmbientLight(0x555555));
+
+//// === ФИЗИКА ===
+const world = new CANNON.World();
+world.gravity.set(0, 0, 0); // отключаем стандартную гравитацию
+
+//// === СОЗДАЁМ ШАХМАТНУЮ ТЕКСТУРУ ===
+function createCheckerTexture(size = 512, squares = 16) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const squareSize = size / squares;
+  for (let y = 0; y < squares; y++) {
+    for (let x = 0; x < squares; x++) {
+      ctx.fillStyle = (x + y) % 2 === 0 ? '#ffffff' : '#000000';
+      ctx.fillRect(x * squareSize, y * squareSize, squareSize, squareSize);
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(8, 8);
+  return texture;
+}
+
+//// === ФУНКЦИЯ СОЗДАНИЯ ПЛАНЕТЫ ===
+function createPlanet(radius, x, y, z, color) {
+  const geo = new THREE.SphereGeometry(radius, 64, 64);
+  const mat = new THREE.MeshStandardMaterial({ map: createCheckerTexture(), roughness: 1, color });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(x, y, z);
+  scene.add(mesh);
+
+  const body = new CANNON.Body({ mass: 0 });
+  body.addShape(new CANNON.Sphere(radius));
+  body.position.set(x, y, z);
+  world.addBody(body);
+
+  return { mesh, body, radius };
+}
+
+//// === ПЛАНЕТЫ ===
+const PLANET_RADIUS = 200;
+const planet1 = createPlanet(PLANET_RADIUS, 0, 0, 0, 0xffffff);  // бело-черная шахматная
+const planet2 = createPlanet(150, 600, 100, 0, 0xffdddd);        // вторая, чуть поменьше и рядом
+
+//// === ШАР-ИГРОК ===
+const BALL_RADIUS = 5;
+const ballGeo = new THREE.SphereGeometry(BALL_RADIUS, 32, 32);
+const ballMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+const ballMesh = new THREE.Mesh(ballGeo, ballMat);
+scene.add(ballMesh);
+
+const ballShape = new CANNON.Sphere(BALL_RADIUS);
+const ballBody = new CANNON.Body({ mass: 5 });
+ballBody.addShape(ballShape);
+ballBody.position.set(0, PLANET_RADIUS + BALL_RADIUS, 0); // стартуем на первой планете
+world.addBody(ballBody);
+
+//// === ИНПУТ ===
+const keys = {};
+let canJump = false;
+window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+//// === МЫШЬ ===
+let camYaw = 0;
+let camPitch = 0;
+document.body.addEventListener('click', () => document.body.requestPointerLock());
+document.addEventListener('mousemove', (e) => {
+  if (document.pointerLockElement === document.body) {
+    camYaw -= e.movementX * 0.002; 
+    camPitch -= e.movementY * 0.002;
+    camPitch = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, camPitch)); 
+  }
+});
+
+//// === ЛОГИКА ===
+const clock = new THREE.Clock();
+const GRAVITY_FORCE = 200;   // сила гравитации
+const MOVE_FORCE = 60;
+const JUMP_FORCE = 300;
+
+ballBody.addEventListener("collide", (e) => {
+  if (e.body === planet1.body || e.body === planet2.body) {
+    canJump = true;
+  }
+});
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+
+  //// === ГРАВИТАЦИЯ ОТ ОБЕИХ ПЛАНЕТ ===
+  [planet1, planet2].forEach(planet => {
+    const toPlanet = new CANNON.Vec3(
+      planet.body.position.x - ballBody.position.x,
+      planet.body.position.y - ballBody.position.y,
+      planet.body.position.z - ballBody.position.z
+    );
+    const dist = toPlanet.length();
+    toPlanet.normalize();
+    // сила гравитации уменьшается с расстоянием
+    toPlanet.scale(GRAVITY_FORCE * (planet.radius/PLANET_RADIUS) / (dist * 0.01), toPlanet);
+    ballBody.applyForce(toPlanet, ballBody.position);
+  });
+
+  //// === УПРАВЛЕНИЕ ===
+  const camDir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(camPitch, camYaw, 0));
+  const camRight = new THREE.Vector3(1, 0, 0).applyEuler(new THREE.Euler(camPitch, camYaw, 0));
+
+  // нормаль для проекции движения
+  const normal = new THREE.Vector3().copy(ballMesh.position).normalize();
+  function moveAlongCamera(vec, scale) {
+    const move = vec.clone().projectOnPlane(normal).normalize().multiplyScalar(scale);
+    ballBody.applyForce(new CANNON.Vec3(move.x, move.y, move.z), ballBody.position);
+  }
+
+  if (keys['w']) moveAlongCamera(camDir, MOVE_FORCE);
+  if (keys['s']) moveAlongCamera(camDir.negate(), MOVE_FORCE);
+  if (keys['a']) moveAlongCamera(camRight.negate(), MOVE_FORCE);
+  if (keys['d']) moveAlongCamera(camRight, MOVE_FORCE);
+
+  //// === ПРЫЖОК ===
+  if (keys[' '] && canJump) {
+    ballBody.applyImpulse(
+      new CANNON.Vec3(normal.x*JUMP_FORCE, normal.y*JUMP_FORCE, normal.z*JUMP_FORCE),
+      ballBody.position
+    );
+    canJump = false;
+  }
+
+  //// === ФИЗИКА ===
+  world.step(1/60, dt);
+
+  //// === СИНХРОНИЗАЦИЯ ===
+  ballMesh.position.copy(ballBody.position);
+
+  //// === КАМЕРА ===
+  const cameraOffset = new THREE.Vector3(0, 8, 30);
+  const camPos = new THREE.Vector3().copy(cameraOffset).applyEuler(new THREE.Euler(camPitch, camYaw, 0));
+  camera.position.copy(ballMesh.position).add(camPos);
+  camera.lookAt(ballMesh.position);
+
+  renderer.render(scene, camera);
+}
+
+animate();
+
+//// === RESIZE ===
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
