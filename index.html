@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Planet Ball 3rd Person – Two Planets</title>
+<title>Planet Ball 3rd Person – Thin Atmosphere</title>
 <style>
   body { margin: 0; overflow: hidden; background: black; }
   canvas { display: block; }
@@ -33,6 +33,7 @@
 <script>
 //// === СЦЕНА ===
 const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000); // начальное небо — чёрное
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 5000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -46,9 +47,9 @@ scene.add(new THREE.AmbientLight(0x555555));
 
 //// === ФИЗИКА ===
 const world = new CANNON.World();
-world.gravity.set(0, 0, 0); // отключаем стандартную гравитацию
+world.gravity.set(0, 0, 0); // отключаем стандартную гравитацию (делаем свою)
 
-//// === СОЗДАЁМ ШАХМАТНУЮ ТЕКСТУРУ ===
+//// === ШАХМАТНАЯ ТЕКСТУРА ===
 function createCheckerTexture(size = 512, squares = 16) {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
@@ -84,8 +85,8 @@ function createPlanet(radius, x, y, z, color) {
 
 //// === ПЛАНЕТЫ ===
 const PLANET_RADIUS = 200;
-const planet1 = createPlanet(PLANET_RADIUS, 0, 0, 0, 0xffffff);  // бело-черная шахматная
-const planet2 = createPlanet(150, 600, 100, 0, 0xffdddd);        // вторая, чуть поменьше и рядом
+const planet1 = createPlanet(PLANET_RADIUS, 0, 0, 0, 0xffffff);   // первая планета
+const planet2 = createPlanet(150, 600, 100, 0, 0xffdddd);         // вторая планета
 
 //// === ШАР-ИГРОК ===
 const BALL_RADIUS = 5;
@@ -118,11 +119,12 @@ document.addEventListener('mousemove', (e) => {
   }
 });
 
-//// === ЛОГИКА ===
+//// === ПАРАМЕТРЫ ===
 const clock = new THREE.Clock();
-const GRAVITY_FORCE = 200;   // сила гравитации
+const GRAVITY_FORCE = 200;
 const MOVE_FORCE = 60;
 const JUMP_FORCE = 300;
+const ATMOSPHERE_THICKNESS = BALL_RADIUS * 5; // атмосфера толщиной 5 шариков
 
 ballBody.addEventListener("collide", (e) => {
   if (e.body === planet1.body || e.body === planet2.body) {
@@ -143,7 +145,6 @@ function animate() {
     );
     const dist = toPlanet.length();
     toPlanet.normalize();
-    // сила гравитации уменьшается с расстоянием
     toPlanet.scale(GRAVITY_FORCE * (planet.radius/PLANET_RADIUS) / (dist * 0.01), toPlanet);
     ballBody.applyForce(toPlanet, ballBody.position);
   });
@@ -152,7 +153,6 @@ function animate() {
   const camDir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(camPitch, camYaw, 0));
   const camRight = new THREE.Vector3(1, 0, 0).applyEuler(new THREE.Euler(camPitch, camYaw, 0));
 
-  // нормаль для проекции движения
   const normal = new THREE.Vector3().copy(ballMesh.position).normalize();
   function moveAlongCamera(vec, scale) {
     const move = vec.clone().projectOnPlane(normal).normalize().multiplyScalar(scale);
@@ -184,6 +184,21 @@ function animate() {
   const camPos = new THREE.Vector3().copy(cameraOffset).applyEuler(new THREE.Euler(camPitch, camYaw, 0));
   camera.position.copy(ballMesh.position).add(camPos);
   camera.lookAt(ballMesh.position);
+
+  //// === ✨ ЭФФЕКТ ТОНКОЙ АТМОСФЕРЫ ===
+  // расстояние до поверхности ближайшей планеты
+  const d1 = ballMesh.position.distanceTo(planet1.mesh.position) - planet1.radius;
+  const d2 = ballMesh.position.distanceTo(planet2.mesh.position) - planet2.radius;
+  const minDist = Math.min(d1, d2);
+
+  if (minDist < ATMOSPHERE_THICKNESS) {
+    const t = Math.max(minDist / ATMOSPHERE_THICKNESS, 0); 
+    // t=0 у поверхности (ярко-синее), t=1 на границе (чёрное)
+    const skyColor = new THREE.Color().lerpColors(new THREE.Color(0x87CEEB), new THREE.Color(0x000000), t);
+    scene.background = skyColor;
+  } else {
+    scene.background = new THREE.Color(0x000000);
+  }
 
   renderer.render(scene, camera);
 }
