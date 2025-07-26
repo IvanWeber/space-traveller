@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Planet Capsule – Pole Fix Camera</title>
+<title>Planet Capsule – Pole Fix Camera with Pitch</title>
 <style>
   body { margin: 0; overflow: hidden; background: black; }
   canvas { display: block; }
@@ -21,7 +21,7 @@
 <body>
 <div id="hud">
   WASD – движение<br>
-  Мышь – поворот носа капсулы<br>
+  Мышь – поворот носа капсулы (влево-вправо) + камера вверх/вниз<br>
   Space – нижнее сопло (прыжок)
 </div>
 
@@ -133,11 +133,14 @@ window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
 document.body.addEventListener('click', () => document.body.requestPointerLock());
 
-// yaw мышью
+// yaw и pitch мышью
 let yaw = 0;
+let pitch = 0;
 document.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement === document.body) {
     yaw -= e.movementX * 0.002;
+    pitch -= e.movementY * 0.002;
+    pitch = Math.max(-Math.PI/3, Math.min(Math.PI/3, pitch)); // ограничение угла обзора вверх/вниз
   }
 });
 
@@ -183,18 +186,28 @@ function animate() {
   // базовый quaternion “низ к планете”
   const baseQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), upVec);
 
-  // создаём локальную “ось yaw” (ось вверх-вниз для поворота)
+  // создаём локальную “ось yaw”
   const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw);
 
   // финальная ориентация капсулы
   capsuleMesh.quaternion.copy(baseQuat).multiply(yawQuat);
 
   // === КАМЕРА ===
-  const cameraOffset = new THREE.Vector3(0, 5, 20);
-  const camPos = cameraOffset.clone().applyQuaternion(capsuleMesh.quaternion);
-  camera.position.copy(capsuleMesh.position).add(camPos);
+  const cameraDistance = 20;
+  const cameraHeight = 5;
 
-  // up камеры = ось капсулы
+  // берём вектор "сзади капсулы"
+  const backOffset = new THREE.Vector3(0, cameraHeight, cameraDistance);
+  backOffset.applyQuaternion(capsuleMesh.quaternion);
+
+  // добавляем вертикальный поворот (pitch) вокруг "правая ось капсулы"
+  const rightAxis = new THREE.Vector3(1,0,0).applyQuaternion(capsuleMesh.quaternion);
+  const pitchQuat = new THREE.Quaternion().setFromAxisAngle(rightAxis, pitch);
+  backOffset.applyQuaternion(pitchQuat);
+
+  camera.position.copy(capsuleMesh.position).add(backOffset);
+
+  // up камеры = ось капсулы (чтобы низ сопла всегда низ)
   const capsuleUp = new THREE.Vector3(0, 1, 0).applyQuaternion(capsuleMesh.quaternion);
   camera.up.copy(capsuleUp);
 
