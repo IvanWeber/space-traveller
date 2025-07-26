@@ -292,8 +292,8 @@ function animate() {
   capsuleMesh.quaternion.slerp(targetQuat, 0.15);
 
   // === Камера ===
-  const cameraDistance = 20;
-  const cameraHeight = 5;
+  const cameraDistance = 30;
+  const cameraHeight = 15;
   let backOffset = new THREE.Vector3(0, cameraHeight, cameraDistance);
   backOffset.applyQuaternion(capsuleMesh.quaternion);
 
@@ -349,10 +349,16 @@ function animate() {
     ballBody.applyForce(new CANNON.Vec3(rightVec.x*THRUST_FORCE, rightVec.y*THRUST_FORCE, rightVec.z*THRUST_FORCE), ballBody.position);
     thrusters.left.flame.visible = true;
   }
+  const BOTTOM_THRUST_FORCE = 300; // можно подбирать — чуть больше чем обычный thrust
+
   if (keys[' ']) {
-    ballBody.applyImpulse(new CANNON.Vec3(up.x*JUMP_FORCE, up.y*JUMP_FORCE, up.z*JUMP_FORCE), ballBody.position);
+    ballBody.applyForce(
+      new CANNON.Vec3(up.x*BOTTOM_THRUST_FORCE, up.y*BOTTOM_THRUST_FORCE, up.z*BOTTOM_THRUST_FORCE),
+      ballBody.position
+    );
     thrusters.bottom.flame.visible = true;
   }
+
 
   world.step(1/60, dt);
   renderer.render(scene, camera);
