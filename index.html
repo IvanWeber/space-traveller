@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Planet Capsule – Planets Collide</title>
+<title>Planet Capsule – Orbital Kick</title>
 <style>
   body { margin: 0; overflow: hidden; background: black; }
   canvas { display: block; }
@@ -23,7 +23,7 @@
   WASD – движение<br>
   Мышь – поворот носа (влево-вправо) + камера вверх/вниз<br>
   Space – нижнее сопло (прыжок)<br>
-  ⚠️ Планеты теперь тянут друг друга и медленно сближаются
+  🌌 Планеты получили стартовый “пинок” и теперь кружатся под действием гравитации
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.min.js"></script>
@@ -73,8 +73,7 @@ function createPlanet(radius, x, y, z, color) {
   mesh.position.set(x, y, z);
   scene.add(mesh);
 
-  // теперь масса ненулевая!
-  const body = new CANNON.Body({ mass: 1e6 });
+  const body = new CANNON.Body({ mass: 1e6 }); // массивные планеты
   body.addShape(new CANNON.Sphere(radius));
   body.position.set(x, y, z);
   world.addBody(body);
@@ -85,11 +84,31 @@ function createPlanet(radius, x, y, z, color) {
 const planet1 = createPlanet(200, 0, 0, 0, 0xffffff);
 const planet2 = createPlanet(150, 600, 100, 0, 0xffdddd);
 
-//// === ФИЗИЧЕСКИЙ ШАР ===
+//// === КРАТКОВРЕМЕННЫЙ ОРБИТАЛЬНЫЙ ПИНОК ===
+const ORBIT_IMPULSE = 2.5e7; // сила стартового пинка (чем больше — тем сильнее закрутит)
+
+const between = new CANNON.Vec3().copy(planet2.body.position).vsub(planet1.body.position); 
+between.normalize();
+
+// вектор, перпендикулярный линии между планетами (по оси Y)
+const orbitDir = new CANNON.Vec3(0, 1, 0).cross(between);
+orbitDir.normalize();
+
+// толчок для обеих планет
+planet1.body.applyImpulse(
+  new CANNON.Vec3(orbitDir.x * ORBIT_IMPULSE, orbitDir.y * ORBIT_IMPULSE, orbitDir.z * ORBIT_IMPULSE),
+  planet1.body.position
+);
+
+planet2.body.applyImpulse(
+  new CANNON.Vec3(-orbitDir.x * ORBIT_IMPULSE, -orbitDir.y * ORBIT_IMPULSE, -orbitDir.z * ORBIT_IMPULSE),
+  planet2.body.position
+);
+
+//// === ФИЗИЧЕСКИЙ ШАР (КАПСУЛА ЛЕТАЕТ НА НЁМ) ===
 const BALL_RADIUS = 3;
 const ballBody = new CANNON.Body({ mass: 5 });
-const ballShape = new CANNON.Sphere(BALL_RADIUS);
-ballBody.addShape(ballShape);
+ballBody.addShape(new CANNON.Sphere(BALL_RADIUS));
 ballBody.position.set(0, 200 + BALL_RADIUS, 0);
 world.addBody(ballBody);
 
@@ -134,7 +153,7 @@ window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
 document.body.addEventListener('click', () => document.body.requestPointerLock());
 
-// === YAW/PITCH ===
+//// === YAW/PITCH ===
 let pitch = 0;
 const yawQuatOffset = new THREE.Quaternion();
 const currentYawQuat = new THREE.Quaternion();
@@ -152,8 +171,8 @@ document.addEventListener('mousemove', (e) => {
 
 //// === ПАРАМЕТРЫ ===
 const clock = new THREE.Clock();
-const GRAVITY_FORCE = 200;
-const PLANET_GRAVITY_G = -0.5; // Гравитационная константа для планет (меньше — медленнее сближаются)
+const GRAVITY_FORCE = 200;           // гравитация для капсулы
+const PLANET_GRAVITY_G = -0.5;       // гравитация между планетами (отрицательная – тянет)
 const THRUST_FORCE = 150;
 const JUMP_FORCE = 100;
 const ATMOSPHERE_THICKNESS = BALL_RADIUS * 5;
@@ -175,7 +194,7 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
 
-  // === ГРАВИТАЦИЯ НА ШАРИК ===
+  // === ГРАВИТАЦИЯ НА КАПСУЛУ ===
   [planet1, planet2].forEach(planet => {
     const toPlanet = new CANNON.Vec3(
       planet.body.position.x - ballBody.position.x,
@@ -195,33 +214,29 @@ function animate() {
     planet2.body.position.z - planet1.body.position.z
   );
   const distPlanets = toP2.length();
-  if (distPlanets > (planet1.radius + planet2.radius)) { // пока не столкнулись
+  if (distPlanets > (planet1.radius + planet2.radius)) {
     toP2.normalize();
     const forceMagnitude = PLANET_GRAVITY_G * planet1.body.mass * planet2.body.mass / (distPlanets * distPlanets);
     const force = new CANNON.Vec3(toP2.x * forceMagnitude, toP2.y * forceMagnitude, toP2.z * forceMagnitude);
 
-    // планета 1 тянет планету 2
     planet2.body.applyForce(force, planet2.body.position);
-
-    // планета 2 тянет планету 1 (в обратную сторону)
     planet1.body.applyForce(force.scale(-1), planet1.body.position);
   }
 
-  // === СИНХРОНИЗАЦИЯ ПЛАНЕТ
+  // === СИНХРОНИЗАЦИЯ ПЛАНЕТ ===
   planet1.mesh.position.copy(planet1.body.position);
   planet2.mesh.position.copy(planet2.body.position);
 
-  // === ПОЗИЦИЯ КАПСУЛЫ
+  // === ПОЗИЦИЯ КАПСУЛЫ ===
   capsuleMesh.position.copy(ballBody.position);
 
-  // === ОРИЕНТАЦИЯ КАПСУЛЫ (низ к ближайшей планете)
+  // === ОРИЕНТАЦИЯ КАПСУЛЫ ===
   const closestPlanet = getClosestPlanet();
   const desiredUp = new THREE.Vector3()
     .subVectors(capsuleMesh.position, closestPlanet.mesh.position)
     .normalize();
   currentUpVec.lerp(desiredUp, UP_TRANSITION_SMOOTHNESS).normalize();
 
-  // === СТАБИЛИЗАЦИЯ ПРИ ПОЛЮСАХ
   const up = currentUpVec.clone();
   const worldForward = new THREE.Vector3(0, 0, -1);
   const worldRight   = new THREE.Vector3(1, 0, 0);
