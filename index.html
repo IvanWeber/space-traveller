@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Planet Capsule – Orbital Kick</title>
+<title>Planet Capsule – Realistic Atmosphere + Proper Sun Light</title>
 <style>
   body { margin: 0; overflow: hidden; background: black; }
   canvas { display: block; }
@@ -23,7 +23,8 @@
   WASD – движение<br>
   Мышь – поворот носа (влево-вправо) + камера вверх/вниз<br>
   Space – нижнее сопло (прыжок)<br>
-  🌌 Планеты получили стартовый “пинок” и теперь кружатся под действием гравитации
+  🌌 Атмосфера голубеет только на освещённой стороне<br>
+  🌞 Солнце теперь дальше и светит точно из своего центра
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.min.js"></script>
@@ -39,9 +40,49 @@ document.body.appendChild(renderer.domElement);
 
 //// === СВЕТ ===
 const sun = new THREE.DirectionalLight(0xffffff, 1);
-sun.position.set(300, 400, 300);
+sun.position.set(1000, 800, 1000);  // Солнце теперь далеко
 scene.add(sun);
-scene.add(new THREE.AmbientLight(0x555555));
+
+// целимся в центр сцены (или можно в корабль)
+sun.target.position.set(0, 0, 0);
+scene.add(sun.target);
+
+// мягкие тени/освещение
+scene.add(new THREE.AmbientLight(0x222222));
+
+//// === 🌞 СОЛНЦЕ-ШАР ===
+const sunSize = 120; // увеличим солнце визуально
+const sunGeo = new THREE.SphereGeometry(sunSize, 64, 64);
+
+// шейдер для плавного перехода белого центра в желтые края
+const sunMat = new THREE.ShaderMaterial({
+  uniforms: {
+    colorCenter: { value: new THREE.Color(0xffffff) },
+    colorEdge: { value: new THREE.Color(0xffcc33) }
+  },
+  vertexShader: `
+    varying vec3 vNormal;
+    void main() {
+      vNormal = normalize(normalMatrix * normal);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    varying vec3 vNormal;
+    uniform vec3 colorCenter;
+    uniform vec3 colorEdge;
+    void main() {
+      float intensity = pow(1.0 - length(vNormal.xy), 1.5);
+      vec3 color = mix(colorEdge, colorCenter, intensity);
+      gl_FragColor = vec4(color, 1.0);
+    }
+  `,
+  side: THREE.FrontSide
+});
+
+const sunMesh = new THREE.Mesh(sunGeo, sunMat);
+sunMesh.position.copy(sun.position);  // совпадает с источником света
+scene.add(sunMesh);
 
 //// === ФИЗИКА ===
 const world = new CANNON.World();
@@ -73,7 +114,7 @@ function createPlanet(radius, x, y, z, color) {
   mesh.position.set(x, y, z);
   scene.add(mesh);
 
-  const body = new CANNON.Body({ mass: 1e6 }); // массивные планеты
+  const body = new CANNON.Body({ mass: 1e6 });
   body.addShape(new CANNON.Sphere(radius));
   body.position.set(x, y, z);
   world.addBody(body);
@@ -84,28 +125,24 @@ function createPlanet(radius, x, y, z, color) {
 const planet1 = createPlanet(200, 0, 0, 0, 0xffffff);
 const planet2 = createPlanet(150, 600, 100, 0, 0xffdddd);
 
-//// === КРАТКОВРЕМЕННЫЙ ОРБИТАЛЬНЫЙ ПИНОК ===
-const ORBIT_IMPULSE = 2.5e7; // сила стартового пинка (чем больше — тем сильнее закрутит)
+//// === ОРБИТАЛЬНЫЙ ПИНОК ===
+const ORBIT_IMPULSE = 2.5e7;
 
-const between = new CANNON.Vec3().copy(planet2.body.position).vsub(planet1.body.position); 
+const between = new CANNON.Vec3().copy(planet2.body.position).vsub(planet1.body.position);
 between.normalize();
-
-// вектор, перпендикулярный линии между планетами (по оси Y)
 const orbitDir = new CANNON.Vec3(0, 1, 0).cross(between);
 orbitDir.normalize();
 
-// толчок для обеих планет
 planet1.body.applyImpulse(
   new CANNON.Vec3(orbitDir.x * ORBIT_IMPULSE, orbitDir.y * ORBIT_IMPULSE, orbitDir.z * ORBIT_IMPULSE),
   planet1.body.position
 );
-
 planet2.body.applyImpulse(
   new CANNON.Vec3(-orbitDir.x * ORBIT_IMPULSE, -orbitDir.y * ORBIT_IMPULSE, -orbitDir.z * ORBIT_IMPULSE),
   planet2.body.position
 );
 
-//// === ФИЗИЧЕСКИЙ ШАР (КАПСУЛА ЛЕТАЕТ НА НЁМ) ===
+//// === ФИЗИЧЕСКИЙ ШАР (КАПСУЛА) ===
 const BALL_RADIUS = 3;
 const ballBody = new CANNON.Body({ mass: 5 });
 ballBody.addShape(new CANNON.Sphere(BALL_RADIUS));
@@ -150,7 +187,6 @@ const thrusters = {
 const keys = {};
 window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
 window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
-
 document.body.addEventListener('click', () => document.body.requestPointerLock());
 
 //// === YAW/PITCH ===
@@ -171,11 +207,11 @@ document.addEventListener('mousemove', (e) => {
 
 //// === ПАРАМЕТРЫ ===
 const clock = new THREE.Clock();
-const GRAVITY_FORCE = 200;           // гравитация для капсулы
-const PLANET_GRAVITY_G = -0.5;       // гравитация между планетами (отрицательная – тянет)
+const GRAVITY_FORCE = 200;
+const PLANET_GRAVITY_G = -0.5;
 const THRUST_FORCE = 150;
 const JUMP_FORCE = 100;
-const ATMOSPHERE_THICKNESS = BALL_RADIUS * 5;
+const ATMOSPHERE_THICKNESS = BALL_RADIUS * 30;
 
 const UP_TRANSITION_SMOOTHNESS = 0.02;
 const VERTICAL_AXIS_ROTATION_PHYSICS = 0.05;
@@ -194,7 +230,7 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
 
-  // === ГРАВИТАЦИЯ НА КАПСУЛУ ===
+  // === Гравитация на капсулу ===
   [planet1, planet2].forEach(planet => {
     const toPlanet = new CANNON.Vec3(
       planet.body.position.x - ballBody.position.x,
@@ -207,7 +243,7 @@ function animate() {
     ballBody.applyForce(toPlanet, ballBody.position);
   });
 
-  // === ГРАВИТАЦИЯ МЕЖДУ ПЛАНЕТАМИ ===
+  // === Гравитация между планетами ===
   const toP2 = new CANNON.Vec3(
     planet2.body.position.x - planet1.body.position.x,
     planet2.body.position.y - planet1.body.position.y,
@@ -218,19 +254,18 @@ function animate() {
     toP2.normalize();
     const forceMagnitude = PLANET_GRAVITY_G * planet1.body.mass * planet2.body.mass / (distPlanets * distPlanets);
     const force = new CANNON.Vec3(toP2.x * forceMagnitude, toP2.y * forceMagnitude, toP2.z * forceMagnitude);
-
     planet2.body.applyForce(force, planet2.body.position);
     planet1.body.applyForce(force.scale(-1), planet1.body.position);
   }
 
-  // === СИНХРОНИЗАЦИЯ ПЛАНЕТ ===
+  // === Синхронизация планет ===
   planet1.mesh.position.copy(planet1.body.position);
   planet2.mesh.position.copy(planet2.body.position);
 
-  // === ПОЗИЦИЯ КАПСУЛЫ ===
+  // === Позиция капсулы ===
   capsuleMesh.position.copy(ballBody.position);
 
-  // === ОРИЕНТАЦИЯ КАПСУЛЫ ===
+  // === Ориентация капсулы ===
   const closestPlanet = getClosestPlanet();
   const desiredUp = new THREE.Vector3()
     .subVectors(capsuleMesh.position, closestPlanet.mesh.position)
@@ -253,11 +288,10 @@ function animate() {
   const baseQuat = new THREE.Quaternion().setFromRotationMatrix(m);
 
   currentYawQuat.slerp(yawQuatOffset, VERTICAL_AXIS_ROTATION_PHYSICS);
-
   targetQuat.copy(baseQuat).multiply(currentYawQuat);
   capsuleMesh.quaternion.slerp(targetQuat, 0.15);
 
-  // === КАМЕРА ===
+  // === Камера ===
   const cameraDistance = 20;
   const cameraHeight = 5;
   let backOffset = new THREE.Vector3(0, cameraHeight, cameraDistance);
@@ -275,15 +309,25 @@ function animate() {
   const d1 = capsuleMesh.position.distanceTo(planet1.mesh.position) - planet1.radius;
   const d2 = capsuleMesh.position.distanceTo(planet2.mesh.position) - planet2.radius;
   const minDist = Math.min(d1, d2);
+  const planet = (d1 < d2) ? planet1 : planet2;
+
   if (minDist < ATMOSPHERE_THICKNESS) {
     const t = Math.max(minDist / ATMOSPHERE_THICKNESS, 0);
-    const skyColor = new THREE.Color().lerpColors(new THREE.Color(0x87CEEB), new THREE.Color(0x000000), t);
+
+    const sunDir = new THREE.Vector3().copy(sun.position).sub(planet.mesh.position).normalize();
+    const toCapsule = new THREE.Vector3().copy(capsuleMesh.position).sub(planet.mesh.position).normalize();
+    let lightFactor = sunDir.dot(toCapsule);
+    lightFactor = Math.max(0, lightFactor);
+
+    const dayColor = new THREE.Color(0x3399FF); // насыщенный голубой
+    const nightColor = new THREE.Color(0x000010);
+    const skyColor = new THREE.Color().lerpColors(dayColor, nightColor, 1 - lightFactor).lerp(new THREE.Color(0x000000), t);
     scene.background = skyColor;
   } else {
     scene.background = new THREE.Color(0x000000);
   }
 
-  // === ДВИЖЕНИЕ И СОПЛА ===
+  // === Движение и сопла ===
   const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(capsuleMesh.quaternion);
   const rightVec = new THREE.Vector3(1, 0, 0).applyQuaternion(capsuleMesh.quaternion);
 
