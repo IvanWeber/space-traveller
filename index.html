@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Planet Capsule – Super Smooth Orientation</title>
+<title>Planet Capsule – Super Smooth Planet Transition</title>
 <style>
   body { margin: 0; overflow: hidden; background: black; }
   canvas { display: block; }
@@ -94,7 +94,6 @@ world.addBody(ballBody);
 //// === КАПСУЛА ===
 const CAPSULE_HEIGHT = 10;
 const CAPSULE_RADIUS = 4;
-
 const capsuleGeo = new THREE.CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_HEIGHT, 8, 16);
 const capsuleMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
 const capsuleMesh = new THREE.Mesh(capsuleGeo, capsuleMat);
@@ -156,7 +155,12 @@ const GRAVITY_FORCE = 200;
 const THRUST_FORCE = 50;
 const JUMP_FORCE = 100;
 const ATMOSPHERE_THICKNESS = BALL_RADIUS * 5;
-const VERTICAL_AXIS_ROTATION_PHYSICS = 0.5; // ← регулируй этот параметр (0.01 – медленно, 0.2 – быстро) (аппарат как бы поворачивается вокруг своей вертикальной оси)
+
+// этот коэффициент отвечает за СКОРОСТЬ адаптации “низа” к новой планете
+const UP_TRANSITION_SMOOTHNESS = 0.02; 
+
+//// === ХРАНИМ ТЕКУЩИЙ “НИЗ” АППАРАТА ===
+let currentUpVec = new THREE.Vector3(0, 1, 0);
 
 function getClosestPlanet() {
   const d1 = ballBody.position.distanceTo(planet1.body.position);
@@ -185,27 +189,29 @@ function animate() {
 
   capsuleMesh.position.copy(ballBody.position);
 
-  // === ВЫЧИСЛЯЕМ upVec (нижняя ось к ближайшей планете)
+  // === НОВЫЙ upVec (куда НАДО повернуть низ)
   const closestPlanet = getClosestPlanet();
-  const upVec = new THREE.Vector3()
+  const desiredUp = new THREE.Vector3()
     .subVectors(capsuleMesh.position, closestPlanet.mesh.position)
     .normalize();
 
-  // === BASE QUAT (низ к планете)
+  // === ПЛАВНО тянем currentUpVec к desiredUp
+  currentUpVec.lerp(desiredUp, UP_TRANSITION_SMOOTHNESS).normalize();
+
+  // === BASE QUAT (низ к currentUpVec)
   const baseQuat = new THREE.Quaternion().setFromUnitVectors(
-    new THREE.Vector3(0, 1, 0), upVec
+    new THREE.Vector3(0, 1, 0), currentUpVec
   );
 
-  // === Итоговая ориентация (baseQuat + накопленный yaw)
+  // === Итоговая ориентация (baseQuat + yaw)
   targetQuat.copy(baseQuat).multiply(yawQuatOffset);
 
-  // === Плавно поворачиваем капсулу (очень мягко)
-  capsuleMesh.quaternion.slerp(targetQuat, ORIENTATION_SMOOTHNESS);
+  // === применяем целевую ориентацию (теперь сам slerp можно оставить быстрым – низ меняется плавно через currentUpVec)
+  capsuleMesh.quaternion.slerp(targetQuat, 0.15);
 
   // === КАМЕРА ===
   const cameraDistance = 20;
   const cameraHeight = 5;
-
   let backOffset = new THREE.Vector3(0, cameraHeight, cameraDistance);
   backOffset.applyQuaternion(capsuleMesh.quaternion);
 
@@ -215,7 +221,7 @@ function animate() {
   backOffset.applyQuaternion(pitchQuat);
 
   camera.position.copy(capsuleMesh.position).add(backOffset);
-  camera.up.copy(upVec);
+  camera.up.copy(currentUpVec);
   camera.lookAt(capsuleMesh.position);
 
   // === ЭФФЕКТ АТМОСФЕРЫ ===
@@ -254,7 +260,7 @@ function animate() {
     thrusters.left.flame.visible = true;
   }
   if (keys[' ']) {
-    ballBody.applyImpulse(new CANNON.Vec3(upVec.x*JUMP_FORCE, upVec.y*JUMP_FORCE, upVec.z*JUMP_FORCE), ballBody.position);
+    ballBody.applyImpulse(new CANNON.Vec3(currentUpVec.x*JUMP_FORCE, currentUpVec.y*JUMP_FORCE, currentUpVec.z*JUMP_FORCE), ballBody.position);
     thrusters.bottom.flame.visible = true;
   }
 
