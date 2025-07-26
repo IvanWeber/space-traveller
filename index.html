@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Planet Capsule – Stable Orientation</title>
+<title>Planet Capsule – Super Smooth Orientation</title>
 <style>
   body { margin: 0; overflow: hidden; background: black; }
   canvas { display: block; }
@@ -156,6 +156,7 @@ const GRAVITY_FORCE = 200;
 const THRUST_FORCE = 50;
 const JUMP_FORCE = 100;
 const ATMOSPHERE_THICKNESS = BALL_RADIUS * 5;
+const VERTICAL_AXIS_ROTATION_PHYSICS = 0.5; // ← регулируй этот параметр (0.01 – медленно, 0.2 – быстро) (аппарат как бы поворачивается вокруг своей вертикальной оси)
 
 function getClosestPlanet() {
   const d1 = ballBody.position.distanceTo(planet1.body.position);
@@ -198,8 +199,8 @@ function animate() {
   // === Итоговая ориентация (baseQuat + накопленный yaw)
   targetQuat.copy(baseQuat).multiply(yawQuatOffset);
 
-  // === Плавно поворачиваем капсулу
-  capsuleMesh.quaternion.slerp(targetQuat, 0.1);
+  // === Плавно поворачиваем капсулу (очень мягко)
+  capsuleMesh.quaternion.slerp(targetQuat, ORIENTATION_SMOOTHNESS);
 
   // === КАМЕРА ===
   const cameraDistance = 20;
