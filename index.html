@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Planet Capsule – Stable Camera + Yaw Physics</title>
+<title>Planet Capsule – Planets Collide</title>
 <style>
   body { margin: 0; overflow: hidden; background: black; }
   canvas { display: block; }
@@ -22,7 +22,8 @@
 <div id="hud">
   WASD – движение<br>
   Мышь – поворот носа (влево-вправо) + камера вверх/вниз<br>
-  Space – нижнее сопло (прыжок)
+  Space – нижнее сопло (прыжок)<br>
+  ⚠️ Планеты теперь тянут друг друга и медленно сближаются
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.min.js"></script>
@@ -72,7 +73,8 @@ function createPlanet(radius, x, y, z, color) {
   mesh.position.set(x, y, z);
   scene.add(mesh);
 
-  const body = new CANNON.Body({ mass: 0 });
+  // теперь масса ненулевая!
+  const body = new CANNON.Body({ mass: 1e6 });
   body.addShape(new CANNON.Sphere(radius));
   body.position.set(x, y, z);
   world.addBody(body);
@@ -135,7 +137,7 @@ document.body.addEventListener('click', () => document.body.requestPointerLock()
 // === YAW/PITCH ===
 let pitch = 0;
 const yawQuatOffset = new THREE.Quaternion();
-const currentYawQuat = new THREE.Quaternion(); // ← плавный yaw
+const currentYawQuat = new THREE.Quaternion();
 
 document.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement === document.body) {
@@ -151,14 +153,14 @@ document.addEventListener('mousemove', (e) => {
 //// === ПАРАМЕТРЫ ===
 const clock = new THREE.Clock();
 const GRAVITY_FORCE = 200;
-const THRUST_FORCE = 50;
+const PLANET_GRAVITY_G = -0.5; // Гравитационная константа для планет (меньше — медленнее сближаются)
+const THRUST_FORCE = 150;
 const JUMP_FORCE = 100;
 const ATMOSPHERE_THICKNESS = BALL_RADIUS * 5;
 
 const UP_TRANSITION_SMOOTHNESS = 0.02;
-const VERTICAL_AXIS_ROTATION_PHYSICS = 0.2; // ← регулируй этот параметр (0.01 – медленно, 0.2 – быстро)
+const VERTICAL_AXIS_ROTATION_PHYSICS = 0.05;
 
-//// === ХРАНИМ ТЕКУЩИЙ “НИЗ” АППАРАТА ===
 let currentUpVec = new THREE.Vector3(0, 1, 0);
 
 function getClosestPlanet() {
@@ -173,7 +175,7 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
 
-  // === ГРАВИТАЦИЯ ===
+  // === ГРАВИТАЦИЯ НА ШАРИК ===
   [planet1, planet2].forEach(planet => {
     const toPlanet = new CANNON.Vec3(
       planet.body.position.x - ballBody.position.x,
@@ -186,15 +188,37 @@ function animate() {
     ballBody.applyForce(toPlanet, ballBody.position);
   });
 
+  // === ГРАВИТАЦИЯ МЕЖДУ ПЛАНЕТАМИ ===
+  const toP2 = new CANNON.Vec3(
+    planet2.body.position.x - planet1.body.position.x,
+    planet2.body.position.y - planet1.body.position.y,
+    planet2.body.position.z - planet1.body.position.z
+  );
+  const distPlanets = toP2.length();
+  if (distPlanets > (planet1.radius + planet2.radius)) { // пока не столкнулись
+    toP2.normalize();
+    const forceMagnitude = PLANET_GRAVITY_G * planet1.body.mass * planet2.body.mass / (distPlanets * distPlanets);
+    const force = new CANNON.Vec3(toP2.x * forceMagnitude, toP2.y * forceMagnitude, toP2.z * forceMagnitude);
+
+    // планета 1 тянет планету 2
+    planet2.body.applyForce(force, planet2.body.position);
+
+    // планета 2 тянет планету 1 (в обратную сторону)
+    planet1.body.applyForce(force.scale(-1), planet1.body.position);
+  }
+
+  // === СИНХРОНИЗАЦИЯ ПЛАНЕТ
+  planet1.mesh.position.copy(planet1.body.position);
+  planet2.mesh.position.copy(planet2.body.position);
+
+  // === ПОЗИЦИЯ КАПСУЛЫ
   capsuleMesh.position.copy(ballBody.position);
 
-  // === НОВЫЙ upVec
+  // === ОРИЕНТАЦИЯ КАПСУЛЫ (низ к ближайшей планете)
   const closestPlanet = getClosestPlanet();
   const desiredUp = new THREE.Vector3()
     .subVectors(capsuleMesh.position, closestPlanet.mesh.position)
     .normalize();
-
-  // === Плавно тянем currentUpVec
   currentUpVec.lerp(desiredUp, UP_TRANSITION_SMOOTHNESS).normalize();
 
   // === СТАБИЛИЗАЦИЯ ПРИ ПОЛЮСАХ
@@ -213,10 +237,8 @@ function animate() {
   m.makeBasis(right, up, forwardStabilized);
   const baseQuat = new THREE.Quaternion().setFromRotationMatrix(m);
 
-  // === ПЛАВНО ПОДТЯГИВАЕМ YAW
   currentYawQuat.slerp(yawQuatOffset, VERTICAL_AXIS_ROTATION_PHYSICS);
 
-  // === Итоговая ориентация
   targetQuat.copy(baseQuat).multiply(currentYawQuat);
   capsuleMesh.quaternion.slerp(targetQuat, 0.15);
 
