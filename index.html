@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Planet Capsule – Stable Camera at Poles</title>
+<title>Planet Capsule – Stable Camera + Yaw Physics</title>
 <style>
   body { margin: 0; overflow: hidden; background: black; }
   canvas { display: block; }
@@ -135,6 +135,7 @@ document.body.addEventListener('click', () => document.body.requestPointerLock()
 // === YAW/PITCH ===
 let pitch = 0;
 const yawQuatOffset = new THREE.Quaternion();
+const currentYawQuat = new THREE.Quaternion(); // ← плавный yaw
 
 document.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement === document.body) {
@@ -154,7 +155,8 @@ const THRUST_FORCE = 50;
 const JUMP_FORCE = 100;
 const ATMOSPHERE_THICKNESS = BALL_RADIUS * 5;
 
-const UP_TRANSITION_SMOOTHNESS = 0.02; // плавность адаптации “низа”
+const UP_TRANSITION_SMOOTHNESS = 0.02;
+const VERTICAL_AXIS_ROTATION_PHYSICS = 0.2; // ← регулируй этот параметр (0.01 – медленно, 0.2 – быстро)
 
 //// === ХРАНИМ ТЕКУЩИЙ “НИЗ” АППАРАТА ===
 let currentUpVec = new THREE.Vector3(0, 1, 0);
@@ -186,18 +188,17 @@ function animate() {
 
   capsuleMesh.position.copy(ballBody.position);
 
-  // === НОВЫЙ upVec (куда НАДО повернуть низ)
+  // === НОВЫЙ upVec
   const closestPlanet = getClosestPlanet();
   const desiredUp = new THREE.Vector3()
     .subVectors(capsuleMesh.position, closestPlanet.mesh.position)
     .normalize();
 
-  // === ПЛАВНО тянем currentUpVec к desiredUp
+  // === Плавно тянем currentUpVec
   currentUpVec.lerp(desiredUp, UP_TRANSITION_SMOOTHNESS).normalize();
 
-  // === СТАБИЛИЗАЦИЯ ПРИ ПОЛЮСАХ ===
+  // === СТАБИЛИЗАЦИЯ ПРИ ПОЛЮСАХ
   const up = currentUpVec.clone();
-
   const worldForward = new THREE.Vector3(0, 0, -1);
   const worldRight   = new THREE.Vector3(1, 0, 0);
 
@@ -206,17 +207,17 @@ function animate() {
     right = new THREE.Vector3().crossVectors(up, worldRight);
   }
   right.normalize();
-
   const forwardStabilized = new THREE.Vector3().crossVectors(right, up).normalize();
 
-  // === СОЗДАЕМ quaternion из этих трёх векторов
   const m = new THREE.Matrix4();
   m.makeBasis(right, up, forwardStabilized);
   const baseQuat = new THREE.Quaternion().setFromRotationMatrix(m);
 
-  // === Итоговая ориентация (baseQuat + yaw)
-  targetQuat.copy(baseQuat).multiply(yawQuatOffset);
+  // === ПЛАВНО ПОДТЯГИВАЕМ YAW
+  currentYawQuat.slerp(yawQuatOffset, VERTICAL_AXIS_ROTATION_PHYSICS);
 
+  // === Итоговая ориентация
+  targetQuat.copy(baseQuat).multiply(currentYawQuat);
   capsuleMesh.quaternion.slerp(targetQuat, 0.15);
 
   // === КАМЕРА ===
@@ -237,7 +238,6 @@ function animate() {
   const d1 = capsuleMesh.position.distanceTo(planet1.mesh.position) - planet1.radius;
   const d2 = capsuleMesh.position.distanceTo(planet2.mesh.position) - planet2.radius;
   const minDist = Math.min(d1, d2);
-
   if (minDist < ATMOSPHERE_THICKNESS) {
     const t = Math.max(minDist / ATMOSPHERE_THICKNESS, 0);
     const skyColor = new THREE.Color().lerpColors(new THREE.Color(0x87CEEB), new THREE.Color(0x000000), t);
