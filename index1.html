@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Planet Capsule – Pole Fix Camera</title>
+<title>Planet Capsule – Visible Thrusters</title>
 <style>
   body { margin: 0; overflow: hidden; background: black; }
   canvas { display: block; }
@@ -20,8 +20,8 @@
 </head>
 <body>
 <div id="hud">
-  WASD – движение<br>
-  Мышь – поворот носа капсулы<br>
+  WASD – боковые сопла<br>
+  Мышь – поворот камеры/аппарата<br>
   Space – нижнее сопло (прыжок)
 </div>
 
@@ -31,6 +31,7 @@
 <script>
 //// === СЦЕНА ===
 const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 5000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -64,7 +65,7 @@ function createCheckerTexture(size = 512, squares = 16) {
   return texture;
 }
 
-//// === ПЛАНЕТЫ ===
+//// === ФУНКЦИЯ СОЗДАНИЯ ПЛАНЕТ ===
 function createPlanet(radius, x, y, z, color) {
   const geo = new THREE.SphereGeometry(radius, 64, 64);
   const mat = new THREE.MeshStandardMaterial({ map: createCheckerTexture(), roughness: 1, color });
@@ -80,50 +81,55 @@ function createPlanet(radius, x, y, z, color) {
   return { mesh, body, radius };
 }
 
+//// === ПЛАНЕТЫ ===
 const planet1 = createPlanet(200, 0, 0, 0, 0xffffff);
 const planet2 = createPlanet(150, 600, 100, 0, 0xffdddd);
 
-//// === ФИЗИЧЕСКИЙ ШАР ===
-const BALL_RADIUS = 3;
-const ballBody = new CANNON.Body({ mass: 5 });
-const ballShape = new CANNON.Sphere(BALL_RADIUS);
-ballBody.addShape(ballShape);
-ballBody.position.set(0, 200 + BALL_RADIUS, 0);
-world.addBody(ballBody);
-
-//// === КАПСУЛА ===
+//// === АППАРАТ ===
 const CAPSULE_HEIGHT = 10;
 const CAPSULE_RADIUS = 4;
 
+// Капсула
 const capsuleGeo = new THREE.CapsuleGeometry(CAPSULE_RADIUS, CAPSULE_HEIGHT, 8, 16);
 const capsuleMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
 const capsuleMesh = new THREE.Mesh(capsuleGeo, capsuleMat);
 scene.add(capsuleMesh);
 
+// Физика капсулы
+const capsuleBody = new CANNON.Body({ mass: 5 });
+const capsuleShape = new CANNON.Cylinder(CAPSULE_RADIUS, CAPSULE_RADIUS, CAPSULE_HEIGHT, 16);
+capsuleBody.addShape(capsuleShape);
+capsuleBody.position.set(0, 200 + CAPSULE_HEIGHT/2, 0);
+capsuleBody.angularDamping = 0.9;
+world.addBody(capsuleBody);
+
 //// === СОПЛА ===
 const thrusterMat = new THREE.MeshBasicMaterial({ color: 0x333333 });
 const flameMat = new THREE.MeshBasicMaterial({ color: 0xff5500 });
 
+// функция создания сопла
 function createThruster(offset) {
   const geo = new THREE.PlaneGeometry(2, 2);
   const mesh = new THREE.Mesh(geo, thrusterMat);
   mesh.position.copy(offset);
   capsuleMesh.add(mesh);
 
+  // "пламя"
   const flame = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), flameMat);
   flame.visible = false;
   mesh.add(flame);
   flame.position.set(0, 0, -0.6);
 
-  return { mesh, flame };
+  return { mesh, flame, offset };
 }
 
+// 4 боковых + 1 нижнее
 const thrusters = {
-  back: createThruster(new THREE.Vector3(0, 0, CAPSULE_RADIUS+0.6)),
-  front: createThruster(new THREE.Vector3(0, 0, -CAPSULE_RADIUS-0.6)),
-  right: createThruster(new THREE.Vector3(CAPSULE_RADIUS+0.6, 0, 0)),
-  left: createThruster(new THREE.Vector3(-CAPSULE_RADIUS-0.6, 0, 0)),
-  bottom: createThruster(new THREE.Vector3(0, -CAPSULE_HEIGHT/2-0.5, 0))
+  back: createThruster(new THREE.Vector3(0, 0,  CAPSULE_RADIUS+0.6)),   // заднее (W)
+  front: createThruster(new THREE.Vector3(0, 0, -CAPSULE_RADIUS-0.6)),  // переднее (S)
+  right: createThruster(new THREE.Vector3( CAPSULE_RADIUS+0.6, 0, 0)),  // правое (A)
+  left: createThruster(new THREE.Vector3(-CAPSULE_RADIUS-0.6, 0, 0)),   // левое (D)
+  bottom: createThruster(new THREE.Vector3(0, -CAPSULE_HEIGHT/2-0.5, 0)) // нижнее (Space)
 };
 
 //// === ИНПУТ ===
@@ -131,13 +137,14 @@ const keys = {};
 window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
 window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
+let camYaw = 0;
+let camPitch = -0.2;
 document.body.addEventListener('click', () => document.body.requestPointerLock());
-
-// yaw мышью
-let yaw = 0;
 document.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement === document.body) {
-    yaw -= e.movementX * 0.002;
+    camYaw -= e.movementX * 0.002;
+    camPitch -= e.movementY * 0.002;
+    camPitch = Math.max(-Math.PI/3, Math.min(Math.PI/3, camPitch));
   }
 });
 
@@ -145,11 +152,12 @@ document.addEventListener('mousemove', (e) => {
 const clock = new THREE.Clock();
 const GRAVITY_FORCE = 200;
 const THRUST_FORCE = 50;
-const JUMP_FORCE = 100;
+const JUMP_FORCE = 100; // было 300, ослаблено в 3 раза
 
+//// === ПОИСК БЛИЖАЙШЕЙ ПЛАНЕТЫ ===
 function getClosestPlanet() {
-  const d1 = ballBody.position.distanceTo(planet1.body.position);
-  const d2 = ballBody.position.distanceTo(planet2.body.position);
+  const d1 = capsuleMesh.position.distanceTo(planet1.mesh.position);
+  const d2 = capsuleMesh.position.distanceTo(planet2.mesh.position);
   return d1 < d2 ? planet1 : planet2;
 }
 
@@ -158,81 +166,79 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
 
-  // === ГРАВИТАЦИЯ ===
+  //// === ГРАВИТАЦИЯ ===
   [planet1, planet2].forEach(planet => {
     const toPlanet = new CANNON.Vec3(
-      planet.body.position.x - ballBody.position.x,
-      planet.body.position.y - ballBody.position.y,
-      planet.body.position.z - ballBody.position.z
+      planet.body.position.x - capsuleBody.position.x,
+      planet.body.position.y - capsuleBody.position.y,
+      planet.body.position.z - capsuleBody.position.z
     );
     const dist = toPlanet.length();
     toPlanet.normalize();
     toPlanet.scale(GRAVITY_FORCE / (dist * 0.01), toPlanet);
-    ballBody.applyForce(toPlanet, ballBody.position);
+    capsuleBody.applyForce(toPlanet, capsuleBody.position);
   });
 
-  // === ПОЗИЦИЯ КАПСУЛЫ ===
-  capsuleMesh.position.copy(ballBody.position);
+  //// === СИНХРОНИЗАЦИЯ ПОЗИЦИИ ===
+  capsuleMesh.position.copy(capsuleBody.position);
 
-  // === ОРИЕНТАЦИЯ КАПСУЛЫ ===
+  //// === ВЫРАВНИВАЕМ КАПСУЛУ К ПЛАНЕТЕ ===
   const closestPlanet = getClosestPlanet();
   const upVec = new THREE.Vector3()
     .subVectors(capsuleMesh.position, closestPlanet.mesh.position)
     .normalize();
 
-  // базовый quaternion “низ к планете”
-  const baseQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), upVec);
+  const targetQuat = new THREE.Quaternion();
+  targetQuat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), upVec);
+  capsuleMesh.quaternion.slerp(targetQuat, 0.2);
+  capsuleBody.quaternion.copy(capsuleMesh.quaternion);
 
-  // создаём локальную “ось yaw” (ось вверх-вниз для поворота)
-  const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw);
-
-  // финальная ориентация капсулы
-  capsuleMesh.quaternion.copy(baseQuat).multiply(yawQuat);
-
-  // === КАМЕРА ===
+  //// === КАМЕРА ===
   const cameraOffset = new THREE.Vector3(0, 5, 20);
-  const camPos = cameraOffset.clone().applyQuaternion(capsuleMesh.quaternion);
+  const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), camYaw);
+  const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), camPitch);
+  const camRot = new THREE.Quaternion().multiplyQuaternions(qYaw, qPitch);
+  const camPos = cameraOffset.clone().applyQuaternion(camRot).applyQuaternion(capsuleMesh.quaternion);
+
   camera.position.copy(capsuleMesh.position).add(camPos);
-
-  // up камеры = ось капсулы
-  const capsuleUp = new THREE.Vector3(0, 1, 0).applyQuaternion(capsuleMesh.quaternion);
-  camera.up.copy(capsuleUp);
-
   camera.lookAt(capsuleMesh.position);
 
-  // === СОПЛА + ДВИЖЕНИЕ ===
-  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(capsuleMesh.quaternion);
-  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(capsuleMesh.quaternion);
+  //// === УПРАВЛЕНИЕ + СОПЛА ===
+  const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(capsuleMesh.quaternion).applyQuaternion(qYaw);
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(capsuleMesh.quaternion).applyQuaternion(qYaw);
 
+  // выключаем пламя
   Object.values(thrusters).forEach(t => t.flame.visible = false);
 
   if (keys['w']) {
-    ballBody.applyForce(new CANNON.Vec3(forward.x*THRUST_FORCE, forward.y*THRUST_FORCE, forward.z*THRUST_FORCE), ballBody.position);
+    capsuleBody.applyForce(new CANNON.Vec3(forward.x*THRUST_FORCE, forward.y*THRUST_FORCE, forward.z*THRUST_FORCE), capsuleBody.position);
     thrusters.back.flame.visible = true;
   }
   if (keys['s']) {
-    ballBody.applyForce(new CANNON.Vec3(-forward.x*THRUST_FORCE, -forward.y*THRUST_FORCE, -forward.z*THRUST_FORCE), ballBody.position);
+    capsuleBody.applyForce(new CANNON.Vec3(-forward.x*THRUST_FORCE, -forward.y*THRUST_FORCE, -forward.z*THRUST_FORCE), capsuleBody.position);
     thrusters.front.flame.visible = true;
   }
   if (keys['a']) {
-    ballBody.applyForce(new CANNON.Vec3(-right.x*THRUST_FORCE, -right.y*THRUST_FORCE, -right.z*THRUST_FORCE), ballBody.position);
+    capsuleBody.applyForce(new CANNON.Vec3(-right.x*THRUST_FORCE, -right.y*THRUST_FORCE, -right.z*THRUST_FORCE), capsuleBody.position);
     thrusters.right.flame.visible = true;
   }
   if (keys['d']) {
-    ballBody.applyForce(new CANNON.Vec3(right.x*THRUST_FORCE, right.y*THRUST_FORCE, right.z*THRUST_FORCE), ballBody.position);
+    capsuleBody.applyForce(new CANNON.Vec3(right.x*THRUST_FORCE, right.y*THRUST_FORCE, right.z*THRUST_FORCE), capsuleBody.position);
     thrusters.left.flame.visible = true;
   }
-  if (keys[' ']) {
-    ballBody.applyImpulse(new CANNON.Vec3(upVec.x*JUMP_FORCE, upVec.y*JUMP_FORCE, upVec.z*JUMP_FORCE), ballBody.position);
+  if (keys[' ']) { 
+    capsuleBody.applyImpulse(new CANNON.Vec3(upVec.x*JUMP_FORCE, upVec.y*JUMP_FORCE, upVec.z*JUMP_FORCE), capsuleBody.position);
     thrusters.bottom.flame.visible = true;
   }
 
+  //// === ФИЗИКА ===
   world.step(1/60, dt);
   renderer.render(scene, camera);
 }
 
 animate();
 
+//// === RESIZE ===
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
